@@ -2,15 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"log"
 	"log/slog"
-	"net/http"
 	"os"
-	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pkg/errors"
 )
 
@@ -19,7 +16,8 @@ const (
 )
 
 type gameDatabase struct {
-	conn *pgx.Conn
+	db *pgxpool.Pool
+	//conn *pgx.Conn
 	// retryer
 }
 
@@ -27,24 +25,25 @@ func NewGameDatabase() *gameDatabase {
 	return &gameDatabase{}
 }
 
-func (gdb *gameDatabase) Connect() error {
-	ctx := context.Background()
+// TODO gérer correctement l'access concurrent aux connexions
+func (gdb *gameDatabase) Connect(ctx context.Context) error {
+
 	// TODO à revoir
 	connUrl := envValue("DATABASE_URL", DEFAULT_DATABASE_URL)
-	conn, err := pgx.Connect(ctx, connUrl)
+	db, err := pgxpool.New(ctx, connUrl)
 	if err != nil {
-		return errors.Wrap(err, "open connection")
-	}
-	defer conn.Close(ctx)
-	err = conn.Ping(ctx)
-	if err != nil {
-		return errors.Wrap(err, "ping database")
+		return errors.Wrap(err, "create connection pool")
 	}
 
-	slog.Info(fmt.Sprintf("Successfully connected to database with %s", connUrl))
-	gdb.conn = conn
+	gdb.db = db
+
+	slog.Info("Successfully connected to database", "url", connUrl)
 
 	return nil
+}
+
+func (gdb *gameDatabase) Ping(ctx context.Context) error {
+	return gdb.db.Ping(ctx)
 }
 
 func envValue(key string, defaultValue string) string {
@@ -57,10 +56,12 @@ func envValue(key string, defaultValue string) string {
 }
 
 // TOD gérer l'access concurrent
-func (gdb *gameDatabase) CreateAndFillTables(ctx context.Context) error {
+func (gdb *gameDatabase) CreateTables(ctx context.Context) error {
+
 	// check table
+	// TODO ne marche pas :-()
 	var exists bool
-	if err := gdb.conn.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_tables WHERE  schemaname = 'public' AND tablename = 'boargames' )").Scan(&exists); err != nil {
+	if err := gdb.db.QueryRow(ctx, "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'boargames' );").Scan(&exists); err != nil {
 		return errors.Wrap(err, "select to check existing table")
 	}
 	if exists {
@@ -69,85 +70,65 @@ func (gdb *gameDatabase) CreateAndFillTables(ctx context.Context) error {
 	}
 
 	// create table
-	results, err := gdb.conn.Query(ctx, "CREATE TABLE boardgames (id SERIAL PRIMARY KEY, title VARCHAR(100) NOT NULL, title VARCHAR(50) NOT NULL, nb_players SMALLSERIAL NOT NULL, created_at TIMESTAMP NOT NULL)")
+	_, err := gdb.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS boardgames (
+											id SERIAL PRIMARY KEY, 
+											title VARCHAR(50) NOT NULL, 
+											description VARCHAR(50) NOT NULL, 
+											nb_players SMALLSERIAL NOT NULL, 
+											jacket_path VARCHAR(50) NOT NULL)`)
 	if err != nil {
 		return errors.Wrap(err, "create table")
 	}
+
 	slog.Info("Table created", "name", "boardgames")
-
-	// insert rows
-	for _, boardgame := range []struct {
-		title     string
-		nbPlayers int
-		created   time.Time
-	}{
-		{"Duel", 2, time.Date(2000, 10, 2, 0, 0, 0, 0, time.Local)},
-		{"Codenames", 2, time.Date(2002, 8, 1, 0, 0, 0, 0, time.Local)},
-		{"Abyss", 4, time.Date(1990, 5, 9, 0, 0, 0, 0, time.Local)},
-	} {
-		queryStmt := `INSERT INTO boardgames (title,nb_players,created_at) VALUES ($1, $2, $3) RETURNING $4`
-
-		err := gdb.conn.QueryRow(ctx, queryStmt, &article.Id, &article.Title, &article.Desc, &article.Content).Scan(&article.Id)
-		if err != nil {
-			log.Println("failed to execute query", err)
-			return
-		}
-	}
-	fmt.Println("Mock Articles included in Table", results)
 	return nil
 }
 
-func (h handler) GetAllArticles(w http.ResponseWriter, r *http.Request) {
+func (gdb *gameDatabase) FillTables(ctx context.Context) error {
 
-	results, err := h.DB.Query("SELECT * FROM articles;")
-	if err != nil {
-		log.Println("failed to execute query", err)
-		w.WriteHeader(500)
-		return
-	}
-
-	var articles = make([]models.Article, 0)
-	for results.Next() {
-		var article models.Article
-		err = results.Scan(&article.Id, &article.Title, &article.Desc, &article.Content)
-		if err != nil {
-			log.Println("failed to scan", err)
-			w.WriteHeader(500)
-			return
+	// insert rows
+	for _, boardgame := range []Boardgame{
+		{Title: "Duel", Description: "Very good", NbPlayers: 2, JacketPath: "/duel.png"},
+		{Title: "Codenames", Description: "Very good as well", NbPlayers: 2, JacketPath: "/codenames.jpg"},
+		{Title: "Abyss", Description: "Not so bad", NbPlayers: 4, JacketPath: "/abyss.png"},
+	} {
+		query := `INSERT INTO boardgames (title,description,nb_players,jacket_path) VALUES (@title, @desc, @nbPlayers, @jacketPath)`
+		args := pgx.NamedArgs{
+			"title":      boardgame.Title,
+			"desc":       boardgame.Description,
+			"nbPlayers":  boardgame.NbPlayers,
+			"jacketPath": boardgame.JacketPath,
 		}
-
-		articles = append(articles, article)
+		_, err := gdb.db.Exec(ctx, query, args)
+		if err != nil {
+			return errors.Wrap(err, "insert boardgame row")
+		}
 	}
-
-	w.Header().Add("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(articles)
+	slog.Info("Boardgames inserted")
+	return nil
 }
 
-func main() {
-	// urlExample := "postgres://username:password@localhost:5432/database_name"
-	conn, err := pgx.Connect(context.Background(), os.Getenv("DATABASE_URL"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
-	}
-	defer conn.Close(context.Background())
+func (gdb *gameDatabase) GetBoardgames(ctx context.Context) ([]Boardgame, error) {
 
-	var name string
-	var weight int64
-	err = conn.QueryRow(context.Background(), "select name, weight from widgets where id=$1", 42).Scan(&name, &weight)
+	rows, err := gdb.db.Query(ctx, "SELECT id,title,description,nb_players,jacket_path FROM boardgames")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "QueryRow failed: %v\n", err)
-		os.Exit(1)
+		return nil, errors.Wrap(err, "select all boardgames")
 	}
+	defer rows.Close()
 
-	fmt.Println(name, weight)
+	boardgames := []Boardgame{}
+	for rows.Next() {
+		var boardgame Boardgame
+		err = rows.Scan(&boardgame.Id, &boardgame.Title, &boardgame.Description, &boardgame.NbPlayers, &boardgame.JacketPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "scan boardgame")
+		}
+
+		boardgames = append(boardgames, boardgame)
+	}
+	return boardgames, nil
 }
 
 func (gdb *gameDatabase) Close() {
-	if gdb.conn != nil {
-		if err := gdb.conn.Close(context.Background()); err != nil {
-			slog.Error("Cloase databse connection.", "cause", err)
-		}
-	}
+	gdb.db.Close()
 }

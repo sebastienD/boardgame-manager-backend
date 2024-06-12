@@ -22,17 +22,28 @@ func main() {
 
 	// init database
 	gdb := NewGameDatabase()
+
 	// TODO retry connection
-	if err := gdb.Connect(); err != nil {
-		slog.Error(fmt.Sprintf("Database connection failed : %v", err), "cause", err.Error())
+	if err := gdb.Connect(context.Background()); err != nil {
+		slog.Error(fmt.Sprintf("Database connection : %v", err), "cause", err.Error())
 		os.Exit(1)
 	}
 	defer gdb.Close()
 
+	if err := gdb.CreateTables(context.Background()); err != nil {
+		slog.Error(fmt.Sprintf("Create tables : %v", err), "cause", err.Error())
+		os.Exit(1)
+	}
+
+	if err := gdb.FillTables(context.Background()); err != nil {
+		slog.Error(fmt.Sprintf("Fill tables : %v", err), "cause", err.Error())
+		os.Exit(1)
+	}
+
 	// define routes and handlers
 	router := mux.NewRouter().StrictSlash(true)
 	router.HandleFunc("/", homeHandler)
-	router.HandleFunc("/gameboard/games", gameboardHandler(gdb)).Methods(http.MethodGet)
+	router.HandleFunc("/gameboards", gameboardHandler(gdb)).Methods(http.MethodGet)
 
 	// TODO gérer le port correctement
 	server := &http.Server{
@@ -70,18 +81,18 @@ func homeHandler(_ http.ResponseWriter, _ *http.Request) {
 }
 
 func gameboardHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request) {
-
-	// TODO add creation table : DDL
-	// TODO insert values
-
 	return func(w http.ResponseWriter, r *http.Request) {
 		slog.Info("Gameboard controller accessed.")
-		// TODO récupérer la lsite des jeux de la BDD
-		var games = []Game{
-			{Name: "Abyss", Description: "Very good game.", JacketPath: "/abyss.png"},
-		}
 		w.Header().Add("Content-Type", "application/json")
-		err := json.NewEncoder(w).Encode(games)
+		// TODO récupérer la lsite des jeux de la BDD
+		boardgames, err := gdb.GetBoardgames(r.Context())
+		// TODO gestion err.NoRows
+		if err != nil {
+			slog.Error("Json failed to encode games.", "cause", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		err = json.NewEncoder(w).Encode(boardgames)
 		if err != nil {
 			slog.Error("Json failed to encode games.", "cause", err)
 			w.WriteHeader(http.StatusInternalServerError)

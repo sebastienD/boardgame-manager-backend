@@ -11,5 +11,8 @@
 go.work
 go.work.sum
 
-# BDD
+# BDD, volume docker-compose
 database
+
+# Binary
+boardgame-manager-backend
