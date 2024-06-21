@@ -2,17 +2,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pkg/errors"
-)
-
-const (
-	DEFAULT_DATABASE_URL = "postgres://zenika:secret@localhost:5432/gameboardManagerDB"
 )
 
 type gameDatabase struct {
@@ -26,13 +21,31 @@ func NewGameDatabase() *gameDatabase {
 }
 
 // TODO gérer correctement l'access concurrent aux connexions
-func (gdb *gameDatabase) Connect(ctx context.Context) error {
+func (gdb *gameDatabase) Connect(ctx context.Context, ready context.CancelFunc, connUrl string, wait time.Duration) {
+	go func(gdb *gameDatabase) {
+		for {
+			err := gdb.connect(ctx, connUrl)
+			if err == nil {
+				ready()
+				return
+			}
+			slog.Info("Failed to connect to the database, retrying...", "url", connUrl, "wait", wait)
+			time.Sleep(wait)
+		}
+	}(gdb)
+}
 
-	// TODO à revoir
-	connUrl := envValue("DATABASE_URL", DEFAULT_DATABASE_URL)
+// TODO gérer correctement l'access concurrent aux connexions
+func (gdb *gameDatabase) connect(ctx context.Context, connUrl string) error {
+
 	db, err := pgxpool.New(ctx, connUrl)
 	if err != nil {
 		return errors.Wrap(err, "create connection pool")
+	}
+
+	err = db.Ping(ctx)
+	if err != nil {
+		return errors.Wrap(err, "ping")
 	}
 
 	gdb.db = db
@@ -40,19 +53,6 @@ func (gdb *gameDatabase) Connect(ctx context.Context) error {
 	slog.Info("Successfully connected to database", "url", connUrl)
 
 	return nil
-}
-
-func (gdb *gameDatabase) Ping(ctx context.Context) error {
-	return gdb.db.Ping(ctx)
-}
-
-func envValue(key string, defaultValue string) string {
-	// TODO use go get github.com/joho/godotenv ?
-	if val, exists := os.LookupEnv(key); exists {
-		return val
-	}
-	slog.Info(fmt.Sprintf("%s env varible isn't defined.", key))
-	return defaultValue
 }
 
 // TOD gérer l'access concurrent

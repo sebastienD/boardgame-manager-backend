@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
+
 	"github.com/gorilla/mux"
 )
 
@@ -20,34 +22,58 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
+	// config
+	_ = godotenv.Load()
+
+	connUrl := os.Getenv("DATABASE_URL")
+	connRetryDuration := os.Getenv("RETRY_CONNECTION_AFTER_FAILED")
+	if connRetryDuration == "" {
+		connRetryDuration = "10s"
+	}
+
+	wait, err := time.ParseDuration(connRetryDuration)
+	if err != nil {
+		slog.Error("Failed to parse duration", "cause", err.Error())
+		os.Exit(1)
+	}
+
 	// init database
 	gdb := NewGameDatabase()
 
-	// TODO retry connection
-	if err := gdb.Connect(context.Background()); err != nil {
-		slog.Error(fmt.Sprintf("Database connection : %v", err), "cause", err.Error())
-		os.Exit(1)
-	}
+	// NOTE: This context will be canceled once the DB connection will be ready to use.
+	waitPlease, waitPleaseFunc := context.WithCancel(context.Background())
+
+	gdb.Connect(context.Background(), waitPleaseFunc, connUrl, wait)
 	defer gdb.Close()
 
-	if err := gdb.CreateTables(context.Background()); err != nil {
-		slog.Error(fmt.Sprintf("Create tables : %v", err), "cause", err.Error())
-		os.Exit(1)
-	}
+	go func() {
+		<-waitPlease.Done()
+		if err := gdb.CreateTables(context.Background()); err != nil {
+			slog.Error(fmt.Sprintf("Create tables : %v", err), "cause", err.Error())
+			os.Exit(1)
+		}
 
-	if err := gdb.FillTables(context.Background()); err != nil {
-		slog.Error(fmt.Sprintf("Fill tables : %v", err), "cause", err.Error())
-		os.Exit(1)
-	}
+		if err := gdb.FillTables(context.Background()); err != nil {
+			slog.Error(fmt.Sprintf("Fill tables : %v", err), "cause", err.Error())
+			os.Exit(1)
+		}
+	}()
 
 	// define routes and handlers
 	router := mux.NewRouter().StrictSlash(true)
+	router.Use(readyMiddleware)
 	router.HandleFunc("/", homeHandler)
 	router.HandleFunc("/gameboards", gameboardHandler(gdb)).Methods(http.MethodGet)
 
-	// TODO gérer le port correctement
+	/*
+	   // IMPORTANT: you must specify an OPTIONS method matcher for the middleware to set CORS headers
+	   r.HandleFunc("/foo", fooHandler).Methods(http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodOptions)
+	   r.Use(mux.CORSMethodMiddleware(r))
+	*/
+
+	// TODO gérer le port correctement en var d'env
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         ":80",
 		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -74,6 +100,15 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Server shutdown gracefully.")
+}
+
+// TODO encapsuler dans une func, avec passage du contexte + switch
+func readyMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		//switch ctx.Done()
+		// Call the next handler, which can be another middleware in the chain, or the final handler.
+		next.ServeHTTP(w, r)
+	})
 }
 
 func homeHandler(_ http.ResponseWriter, _ *http.Request) {
