@@ -88,9 +88,18 @@ func (gdb *gameDatabase) FillTables(ctx context.Context) error {
 
 	// insert rows
 	for _, boardgame := range []Boardgame{
-		{Title: "Duel", Description: "Very good", NbPlayers: 2, JacketPath: "/duel.png"},
-		{Title: "Codenames", Description: "Very good as well", NbPlayers: 2, JacketPath: "/codenames.jpg"},
-		{Title: "Abyss", Description: "Not so bad", NbPlayers: 4, JacketPath: "/abyss.png"},
+		{Title: "7 Wonders Duel", Description: "7 wonders, mais version duel", NbPlayers: 2, JacketPath: "https://cdn3.philibertnet.com/343934-large_default/7-wonders-duel.jpg"},
+		{Title: "Azul", Description: "Un jeu avec des careaux de mosaïque Portugais", NbPlayers: 4, JacketPath: "https://cdn3.philibertnet.com/402193-large_default/azul.jpg"},
+		{Title: "Brass: Lancashire", Description: "Un jeu de stratégie économie a l'ère du rail", NbPlayers: 4, JacketPath: "https://cdn1.philibertnet.com/417603-large_default/brass-lancashire.jpg"},
+		{Title: "Carcassonne", Description: "Un jeu a l'ambiance médiévale", NbPlayers: 5, JacketPath: "https://cdn2.philibertnet.com/542823-large_default/carcassonne-vf.jpg"},
+		{Title: "Clank!", Description: "Un jeu de deck building", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/361470-large_default/clank.jpg"},
+		{Title: "Codenames", Description: "Un jeu d'ambiance et d'espionnage", NbPlayers: 8, JacketPath: "https://cdn1.philibertnet.com/353015-large_default/codenames-vf.jpg"},
+		{Title: "Dice Forge", Description: "Un deck building, mais avec des dés", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/369895-large_default/dice-forge.jpg"},
+		{Title: "Dixit", Description: "Un jeu de communication", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/509638-large_default/dixit.jpg"},
+		{Title: "Hive", Description: "Mieux que les echecs, et avec des insectes", NbPlayers: 2, JacketPath: "https://cdn3.philibertnet.com/476730-large_default/hive-pocket.jpg"},
+		{Title: "Jamaica", Description: "Un jeu de course de pirates", NbPlayers: 6, JacketPath: "https://cdn1.philibertnet.com/518554-large_default/jamaica.jpg"},
+		{Title: "Skull", Description: "Un jeu de bluff", NbPlayers: 6, JacketPath: "https://cdn3.philibertnet.com/576691-large_default/skull-silver.jpg"},
+		{Title: "Timebomb", Description: "Un autre jeu de bluff", NbPlayers: 8, JacketPath: "https://cdn3.philibertnet.com/362353-large_default/time-bomb.jpg"},
 	} {
 		query := `INSERT INTO boardgames (title,description,nb_players,jacket_path) VALUES (@title, @desc, @nbPlayers, @jacketPath)`
 		args := pgx.NamedArgs{
