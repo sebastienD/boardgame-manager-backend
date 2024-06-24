@@ -17,6 +17,21 @@ import (
 	"github.com/gorilla/mux"
 )
 
+var boardgamesDef = []Boardgame{
+	{Title: "7 Wonders Duel", Description: "7 wonders, mais version duel", NbPlayers: 2, JacketPath: "https://cdn3.philibertnet.com/343934-large_default/7-wonders-duel.jpg"},
+	{Title: "Azul", Description: "Un jeu avec des careaux de mosaïque Portugais", NbPlayers: 4, JacketPath: "https://cdn3.philibertnet.com/402193-large_default/azul.jpg"},
+	{Title: "Brass: Lancashire", Description: "Un jeu de stratégie économie a l'ère du rail", NbPlayers: 4, JacketPath: "https://cdn1.philibertnet.com/417603-large_default/brass-lancashire.jpg"},
+	{Title: "Carcassonne", Description: "Un jeu a l'ambiance médiévale", NbPlayers: 5, JacketPath: "https://cdn2.philibertnet.com/542823-large_default/carcassonne-vf.jpg"},
+	{Title: "Clank!", Description: "Un jeu de deck building", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/361470-large_default/clank.jpg"},
+	{Title: "Codenames", Description: "Un jeu d'ambiance et d'espionnage", NbPlayers: 8, JacketPath: "https://cdn1.philibertnet.com/353015-large_default/codenames-vf.jpg"},
+	{Title: "Dice Forge", Description: "Un deck building, mais avec des dés", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/369895-large_default/dice-forge.jpg"},
+	{Title: "Dixit", Description: "Un jeu de communication", NbPlayers: 4, JacketPath: "https://cdn2.philibertnet.com/509638-large_default/dixit.jpg"},
+	{Title: "Hive", Description: "Mieux que les echecs, et avec des insectes", NbPlayers: 2, JacketPath: "https://cdn3.philibertnet.com/476730-large_default/hive-pocket.jpg"},
+	{Title: "Jamaica", Description: "Un jeu de course de pirates", NbPlayers: 6, JacketPath: "https://cdn1.philibertnet.com/518554-large_default/jamaica.jpg"},
+	{Title: "Skull", Description: "Un jeu de bluff", NbPlayers: 6, JacketPath: "https://cdn3.philibertnet.com/576691-large_default/skull-silver.jpg"},
+	{Title: "Timebomb", Description: "Un autre jeu de bluff", NbPlayers: 8, JacketPath: "https://cdn3.philibertnet.com/362353-large_default/time-bomb.jpg"},
+}
+
 func main() {
 	// init logger
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -30,6 +45,10 @@ func main() {
 	if connRetryDuration == "" {
 		connRetryDuration = "10s"
 	}
+	httpPort := os.Getenv("HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "80"
+	}
 
 	wait, err := time.ParseDuration(connRetryDuration)
 	if err != nil {
@@ -41,39 +60,38 @@ func main() {
 	gdb := NewGameDatabase()
 
 	// NOTE: This context will be canceled once the DB connection will be ready to use.
-	waitPlease, waitPleaseFunc := context.WithCancel(context.Background())
+	waitConnect, waitConnectFunc := context.WithCancel(context.Background())
 
-	gdb.Connect(context.Background(), waitPleaseFunc, connUrl, wait)
+	gdb.Connect(context.Background(), waitConnectFunc, connUrl, wait)
 	defer gdb.Close()
 
 	go func() {
-		<-waitPlease.Done()
+		<-waitConnect.Done()
 		if err := gdb.CreateTables(context.Background()); err != nil {
 			slog.Error(fmt.Sprintf("Create tables : %v", err), "cause", err.Error())
 			os.Exit(1)
 		}
 
-		if err := gdb.FillTables(context.Background()); err != nil {
+		if err := gdb.FillTables(context.Background(), boardgamesDef); err != nil {
 			slog.Error(fmt.Sprintf("Fill tables : %v", err), "cause", err.Error())
 			os.Exit(1)
 		}
+		gdb.Ready = true
 	}()
 
 	// define routes and handlers
 	router := mux.NewRouter().StrictSlash(true)
-	router.Use(readyMiddleware)
 	router.HandleFunc("/", homeHandler)
-	router.HandleFunc("/gameboards", gameboardHandler(gdb)).Methods(http.MethodGet)
+	router.HandleFunc("/health", healthHandler).Methods(http.MethodGet)
 
-	/*
-	   // IMPORTANT: you must specify an OPTIONS method matcher for the middleware to set CORS headers
-	   r.HandleFunc("/foo", fooHandler).Methods(http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodOptions)
-	   r.Use(mux.CORSMethodMiddleware(r))
-	*/
+	s := router.PathPrefix("/gameboards").Subrouter()
+	s.Use(mux.CORSMethodMiddleware(s))
+	s.Use(readyMiddleware(gdb))
+	s.HandleFunc("/", gameboardHandler(gdb)).Methods(http.MethodGet, http.MethodOptions)
+	s.HandleFunc("/static", gameboardStaticHandler).Methods(http.MethodGet, http.MethodOptions)
 
-	// TODO gérer le port correctement en var d'env
 	server := &http.Server{
-		Addr:         ":80",
+		Addr:         ":" + httpPort,
 		Handler:      router,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
@@ -102,24 +120,36 @@ func main() {
 	slog.Info("Server shutdown gracefully.")
 }
 
-// TODO encapsuler dans une func, avec passage du contexte + switch
-func readyMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		//switch ctx.Done()
-		// Call the next handler, which can be another middleware in the chain, or the final handler.
-		next.ServeHTTP(w, r)
-	})
+// TODO encapsuler dans une func, avec passage du contexte + switch ou accès concurrent au ready
+func readyMiddleware(gdb *gameDatabase) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if gdb.Ready {
+				next.ServeHTTP(w, r)
+			} else {
+				slog.Error("BDD connection not ready to use.")
+				w.WriteHeader(http.StatusTooEarly)
+			}
+		})
+	}
 }
 
 func homeHandler(_ http.ResponseWriter, _ *http.Request) {
 	slog.Info("Home controller accessed.")
 }
 
+func healthHandler(_ http.ResponseWriter, _ *http.Request) {
+	slog.Info("Health controller accessed.")
+}
+
 func gameboardHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			return
+		}
 		slog.Info("Gameboard controller accessed.")
 		w.Header().Add("Content-Type", "application/json")
-		// TODO récupérer la lsite des jeux de la BDD
 		boardgames, err := gdb.GetBoardgames(r.Context())
 		// TODO gestion err.NoRows
 		if err != nil {
@@ -132,5 +162,19 @@ func gameboardHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request
 			slog.Error("Json failed to encode games.", "cause", err)
 			w.WriteHeader(http.StatusInternalServerError)
 		}
+	}
+}
+
+func gameboardStaticHandler(w http.ResponseWriter, req *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if req.Method == http.MethodOptions {
+		return
+	}
+	slog.Info("Static Gameboard controller accessed.")
+	w.Header().Add("Content-Type", "application/json")
+	err := json.NewEncoder(w).Encode(boardgamesDef)
+	if err != nil {
+		slog.Error("Json failed to encode games.", "cause", err)
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 }

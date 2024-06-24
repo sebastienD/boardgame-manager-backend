@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Construire le binaire de l'application
-RUN go build -o myapp .
+RUN env GOOS=linux GOARCH=amd64 go build -o myapp .
 
 # Étape 2 : Créer une image minimale pour exécuter l'application
 FROM alpine:latest

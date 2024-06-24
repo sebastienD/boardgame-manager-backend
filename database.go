@@ -11,9 +11,10 @@ import (
 )
 
 type gameDatabase struct {
-	db *pgxpool.Pool
-	//conn *pgx.Conn
-	// retryer
+	db        *pgxpool.Pool
+	connected bool
+	// TODO à gerer via mutex
+	Ready bool
 }
 
 func NewGameDatabase() *gameDatabase {
@@ -21,12 +22,14 @@ func NewGameDatabase() *gameDatabase {
 }
 
 // TODO gérer correctement l'access concurrent aux connexions
-func (gdb *gameDatabase) Connect(ctx context.Context, ready context.CancelFunc, connUrl string, wait time.Duration) {
+func (gdb *gameDatabase) Connect(ctx context.Context, connected context.CancelFunc, connUrl string, wait time.Duration) {
 	go func(gdb *gameDatabase) {
 		for {
 			err := gdb.connect(ctx, connUrl)
 			if err == nil {
-				ready()
+				// TODO gérer via mutex pour les accès concurrents
+				gdb.connected = true
+				connected()
 				return
 			}
 			slog.Info("Failed to connect to the database, retrying...", "url", connUrl, "wait", wait)
@@ -35,7 +38,6 @@ func (gdb *gameDatabase) Connect(ctx context.Context, ready context.CancelFunc, 
 	}(gdb)
 }
 
-// TODO gérer correctement l'access concurrent aux connexions
 func (gdb *gameDatabase) connect(ctx context.Context, connUrl string) error {
 
 	db, err := pgxpool.New(ctx, connUrl)
@@ -55,7 +57,6 @@ func (gdb *gameDatabase) connect(ctx context.Context, connUrl string) error {
 	return nil
 }
 
-// TOD gérer l'access concurrent
 func (gdb *gameDatabase) CreateTables(ctx context.Context) error {
 
 	// check table
@@ -72,10 +73,10 @@ func (gdb *gameDatabase) CreateTables(ctx context.Context) error {
 	// create table
 	_, err := gdb.db.Exec(ctx, `CREATE TABLE IF NOT EXISTS boardgames (
 											id SERIAL PRIMARY KEY, 
-											title VARCHAR(50) NOT NULL, 
-											description VARCHAR(50) NOT NULL, 
+											title VARCHAR(200) NOT NULL, 
+											description VARCHAR(500) NOT NULL, 
 											nb_players SMALLSERIAL NOT NULL, 
-											jacket_path VARCHAR(50) NOT NULL)`)
+											jacket_path VARCHAR(200) NOT NULL)`)
 	if err != nil {
 		return errors.Wrap(err, "create table")
 	}
@@ -84,14 +85,10 @@ func (gdb *gameDatabase) CreateTables(ctx context.Context) error {
 	return nil
 }
 
-func (gdb *gameDatabase) FillTables(ctx context.Context) error {
+func (gdb *gameDatabase) FillTables(ctx context.Context, boardgames []Boardgame) error {
 
 	// insert rows
-	for _, boardgame := range []Boardgame{
-		{Title: "Duel", Description: "Very good", NbPlayers: 2, JacketPath: "/duel.png"},
-		{Title: "Codenames", Description: "Very good as well", NbPlayers: 2, JacketPath: "/codenames.jpg"},
-		{Title: "Abyss", Description: "Not so bad", NbPlayers: 4, JacketPath: "/abyss.png"},
-	} {
+	for _, boardgame := range boardgames {
 		query := `INSERT INTO boardgames (title,description,nb_players,jacket_path) VALUES (@title, @desc, @nbPlayers, @jacketPath)`
 		args := pgx.NamedArgs{
 			"title":      boardgame.Title,
@@ -130,5 +127,7 @@ func (gdb *gameDatabase) GetBoardgames(ctx context.Context) ([]Boardgame, error)
 }
 
 func (gdb *gameDatabase) Close() {
-	gdb.db.Close()
+	if gdb.connected {
+		gdb.db.Close()
+	}
 }
