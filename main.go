@@ -134,8 +134,9 @@ func readyMiddleware(gdb *gameDatabase) mux.MiddlewareFunc {
 	}
 }
 
-func homeHandler(_ http.ResponseWriter, _ *http.Request) {
+func homeHandler(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Home controller accessed.")
+	fmt.Fprintf(w, `Welcome to Boardgame manager 😘`)
 }
 
 func healthHandler(_ http.ResponseWriter, _ *http.Request) {
