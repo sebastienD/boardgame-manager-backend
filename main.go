@@ -86,7 +86,6 @@ func main() {
 
 	s := router.PathPrefix("/boardgames").Subrouter()
 	s.Use(mux.CORSMethodMiddleware(s))
-	s.Use(readyMiddleware(gdb))
 	s.HandleFunc("/", boardgameHandler(gdb)).Methods(http.MethodGet, http.MethodOptions)
 	s.HandleFunc("/static", boardgameStaticHandler).Methods(http.MethodGet, http.MethodOptions)
 
@@ -120,23 +119,9 @@ func main() {
 	slog.Info("Server shutdown gracefully.")
 }
 
-// TODO encapsuler dans une func, avec passage du contexte + switch ou accès concurrent au ready
-func readyMiddleware(gdb *gameDatabase) mux.MiddlewareFunc {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if gdb.Ready {
-				next.ServeHTTP(w, r)
-			} else {
-				slog.Error("BDD connection not ready to use.")
-				w.WriteHeader(http.StatusTooEarly)
-			}
-		})
-	}
-}
-
 func homeHandler(w http.ResponseWriter, _ *http.Request) {
 	slog.Info("Home controller accessed.")
-	fmt.Fprintf(w, `Welcome to Boardgame manager 😘`)
+	fmt.Fprintf(w, `Welcome to Boardgames manager 😘`)
 }
 
 func healthHandler(_ http.ResponseWriter, _ *http.Request) {
@@ -149,6 +134,12 @@ func boardgameHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request
 		if r.Method == http.MethodOptions {
 			return
 		}
+		if !gdb.Ready {
+			slog.Error("BDD connection not ready to use.")
+			w.WriteHeader(http.StatusTooEarly)
+			return
+		}
+
 		slog.Info("Boardgame controller accessed.")
 		w.Header().Add("Content-Type", "application/json")
 		boardgames, err := gdb.GetBoardgames(r.Context())
