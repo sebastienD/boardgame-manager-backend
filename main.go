@@ -84,11 +84,11 @@ func main() {
 	router.HandleFunc("/", homeHandler)
 	router.HandleFunc("/health", healthHandler).Methods(http.MethodGet)
 
-	s := router.PathPrefix("/gameboards").Subrouter()
+	s := router.PathPrefix("/boardgames").Subrouter()
 	s.Use(mux.CORSMethodMiddleware(s))
 	s.Use(readyMiddleware(gdb))
-	s.HandleFunc("/", gameboardHandler(gdb)).Methods(http.MethodGet, http.MethodOptions)
-	s.HandleFunc("/static", gameboardStaticHandler).Methods(http.MethodGet, http.MethodOptions)
+	s.HandleFunc("/", boardgameHandler(gdb)).Methods(http.MethodGet, http.MethodOptions)
+	s.HandleFunc("/static", boardgameStaticHandler).Methods(http.MethodGet, http.MethodOptions)
 
 	server := &http.Server{
 		Addr:         ":" + httpPort,
@@ -142,13 +142,13 @@ func healthHandler(_ http.ResponseWriter, _ *http.Request) {
 	slog.Info("Health controller accessed.")
 }
 
-func gameboardHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request) {
+func boardgameHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if r.Method == http.MethodOptions {
 			return
 		}
-		slog.Info("Gameboard controller accessed.")
+		slog.Info("Boardgame controller accessed.")
 		w.Header().Add("Content-Type", "application/json")
 		boardgames, err := gdb.GetBoardgames(r.Context())
 		// TODO gestion err.NoRows
@@ -165,12 +165,12 @@ func gameboardHandler(gdb *gameDatabase) func(http.ResponseWriter, *http.Request
 	}
 }
 
-func gameboardStaticHandler(w http.ResponseWriter, req *http.Request) {
+func boardgameStaticHandler(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	if req.Method == http.MethodOptions {
 		return
 	}
-	slog.Info("Static Gameboard controller accessed.")
+	slog.Info("Static BoardGame controller accessed.")
 	w.Header().Add("Content-Type", "application/json")
 	err := json.NewEncoder(w).Encode(boardgamesDef)
 	if err != nil {

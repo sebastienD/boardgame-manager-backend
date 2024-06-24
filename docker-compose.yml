@@ -1,13 +1,13 @@
 version: "3.8"
 services:
   database:
-    container_name: gameboard-manager-database
+    container_name: boardgame-manager-database
     image: postgres
     ports:
       - "5432:5432"
     volumes:
       - ./database:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=gameboardManagerDB
+      - POSTGRES_DB=boardgameManagerDB
       - POSTGRES_USER=zenika
       - POSTGRES_PASSWORD=secret

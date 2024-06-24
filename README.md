@@ -1,1 +1,1 @@
-# gameboard-manager-backend
+# boardgame-manager-backend
